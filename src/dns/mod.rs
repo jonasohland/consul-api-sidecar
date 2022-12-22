@@ -42,7 +42,6 @@ where
     Ok(())
 }
 
-
 #[allow(unused)]
 mod test {
     use bytes::BytesMut;
@@ -72,7 +71,8 @@ mod test {
                 &mut b,
                 &DNSMessage::try_new(BytesMut::from([0xff, 0x43].as_slice())).unwrap(),
             )
-            .await.unwrap();
+            .await
+            .unwrap();
         });
 
         ta.await.unwrap();

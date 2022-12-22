@@ -24,7 +24,6 @@ enum ServerEvent {
 }
 
 impl Server {
-
     async fn shutdown(self) -> Result<()> {
         match self.shutdown_handle.send(()) {
             Ok(_) => self.join_handle.await?,
@@ -42,8 +41,7 @@ impl Server {
                     ServerEvent::Shutdown
                 }
             } {
-                ServerEvent::Accepted(Ok((nix_stream, addr))) => {
-                }
+                ServerEvent::Accepted(Ok((nix_stream, addr))) => {}
                 ServerEvent::Accepted(Err(err)) => break Err(err),
                 ServerEvent::Shutdown => {
                     println!("shutting down");
