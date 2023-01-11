@@ -2,7 +2,10 @@ use anyhow::Result;
 use bytes::BytesMut;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub mod bridge;
+pub mod egress_bridge;
+pub mod ingress_bridge;
+pub mod forwarder;
+pub mod channel;
 
 pub struct DNSMessage {
     data: BytesMut,

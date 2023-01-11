@@ -377,10 +377,6 @@ mod test {
 
     #[tokio::test]
     async fn handshake() {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .try_init()
-            .ok();
         let (mut listener, mut caller) = make_test_connection();
 
         let join_a = task::spawn(
@@ -412,11 +408,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn handshake_reject() {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .try_init()
-            .ok();
+    async fn deny() {
         let (mut listener, mut caller) = make_test_connection();
 
         let task_a = task::spawn(async move {
@@ -428,7 +420,7 @@ mod test {
             match handshake.perform(&mut listener).await {
                 Ok(_) => panic!("handshake should have failed"),
                 Err(err) => {
-                    println!("{:#?}", err.downcast_ref::<ChannelError>().unwrap());
+                    assert!(matches!(err.downcast_ref::<ChannelError>(), Some(_)))
                 }
             }
         });
@@ -442,7 +434,7 @@ mod test {
             match handshake.perform(&mut caller).await {
                 Ok(_) => panic!("handshake should have failed"),
                 Err(err) => {
-                    println!("{:#?}", err.downcast_ref::<ChannelError>().unwrap())
+                    assert!(matches!(err.downcast_ref::<ChannelError>(), Some(_)))
                 }
             }
         });
@@ -452,11 +444,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn reject_offer() {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .try_init()
-            .ok();
+    async fn reject() {
         let (mut listener, mut caller) = make_test_connection();
 
         let task_a = task::spawn(async move {
@@ -468,7 +456,7 @@ mod test {
             match handshake.perform(&mut listener).await {
                 Ok(_) => panic!(),
                 Err(err) => {
-                    println!("failed: {:?}", err.downcast_ref::<ChannelError>().unwrap())
+                    assert!(matches!(err.downcast_ref::<ChannelError>(), Some(_)))
                 }
             }
         });
@@ -482,7 +470,7 @@ mod test {
             match handshake.perform(&mut caller).await {
                 Ok(_) => panic!(),
                 Err(err) => {
-                    println!("failed: {:?}", err.downcast_ref::<ChannelError>().unwrap())
+                    assert!(matches!(err.downcast_ref::<ChannelError>(), Some(_)))
                 }
             }
         });

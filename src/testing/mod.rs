@@ -1,5 +1,6 @@
 use std::{
     io::{self, IoSlice},
+    marker::PhantomData,
     net::{IpAddr, SocketAddr},
     pin::Pin,
     task::{Context, Poll},
@@ -7,7 +8,10 @@ use std::{
 
 use anyhow::anyhow;
 use bytes::{BufMut, BytesMut};
-use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
+use futures::{
+    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
+    Sink, SinkExt, Stream,
+};
 use futures::{AsyncRead, AsyncWrite, StreamExt};
 use rand::Rng;
 use tokio::net::UdpSocket;
@@ -120,6 +124,42 @@ pub fn make_test_connection() -> (TestConnection, TestConnection) {
             rx_buf: Default::default(),
         },
     )
+}
+
+pub struct ManualLoopback<Tx, Rx, Item>
+where
+    Tx: Sink<Item>,
+    Rx: Stream<Item = Item>,
+    <Tx as futures::Sink<Item>>::Error: std::error::Error + Send + Sync + 'static,
+{
+    tx: Tx,
+    rx: Rx,
+    _i: PhantomData<Item>,
+}
+
+impl<Tx, Rx, Item> ManualLoopback<Tx, Rx, Item>
+where
+    Tx: Sink<Item> + Unpin,
+    Rx: Stream<Item = Item> + Unpin,
+    <Tx as futures::Sink<Item>>::Error: std::error::Error + Send + Sync + 'static,
+{
+    pub fn new(tx: Tx, rx: Rx) -> Self {
+        Self {
+            rx,
+            tx,
+            _i: Default::default(),
+        }
+    }
+
+    pub async fn loopback(&mut self) -> anyhow::Result<()> {
+        let item = self
+            .rx
+            .next()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("empty"))?;
+        self.tx.send(item).await?;
+        Ok(())
+    }
 }
 
 #[allow(unused)]

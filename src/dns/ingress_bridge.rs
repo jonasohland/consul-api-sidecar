@@ -14,14 +14,14 @@ use tracing::Instrument;
 
 use super::DNSMessage;
 
-pub struct DNSBridge {
+pub struct Bridge {
     shutdown: oneshot::Sender<()>,
     task: task::JoinHandle<Result<()>>,
 }
 
 pub struct Config {
-    listen: SocketAddr,
-    timeout: Duration,
+    pub listen: SocketAddr,
+    pub timeout: Duration,
 }
 
 struct DNSMsgState {
@@ -38,7 +38,7 @@ impl DNSMsgState {
     }
 }
 
-enum DNSBridgeEvent {
+enum BridgeEvent {
     Shutdown,
     Timeout,
     SocketError(io::Error),
@@ -46,7 +46,7 @@ enum DNSBridgeEvent {
     DNSFromBridge(DNSMessage),
 }
 
-impl DNSBridge {
+impl Bridge {
     pub async fn shutdown(self) -> Result<()> {
         self.shutdown.send(()).ok();
         self.task.await??;
@@ -66,7 +66,7 @@ impl DNSBridge {
             shutdown: shutdown_tx,
             task: task::spawn(
                 Self::run(config, shutdown_rx, sock, dns_tx, dns_rx)
-                    .instrument(tracing::error_span!("dns-bridge")),
+                    .instrument(tracing::error_span!("dns-ingress-bridge")),
             ),
         })
     }
@@ -103,40 +103,40 @@ impl DNSBridge {
         loop {
             match tokio::select! {
                 _ = &mut shutdown => {
-                    DNSBridgeEvent::Shutdown
+                    BridgeEvent::Shutdown
                 }
                 _ = tokio::time::sleep(Duration::from_secs(3)) => {
-                    DNSBridgeEvent::Timeout
+                    BridgeEvent::Timeout
                 }
                 res = sock.recv_from(&mut buf) => {
                     match res {
-                        Ok((len, addr)) => DNSBridgeEvent::DNSFromNet(len, addr),
-                        Err(e) => DNSBridgeEvent::SocketError(e),
+                        Ok((len, addr)) => BridgeEvent::DNSFromNet(len, addr),
+                        Err(e) => BridgeEvent::SocketError(e),
                     }
 
                 }
                 res = dns_rx.next() => {
                     match res {
-                        Some(msg) => DNSBridgeEvent::DNSFromBridge(msg),
-                        None => DNSBridgeEvent::Shutdown
+                        Some(msg) => BridgeEvent::DNSFromBridge(msg),
+                        None => BridgeEvent::Shutdown
                     }
                 }
             } {
-                DNSBridgeEvent::Shutdown => {
+                BridgeEvent::Shutdown => {
                     tracing::debug!("shutting down");
                     break Ok(());
                 }
-                DNSBridgeEvent::Timeout => {
-                    // loop to run cleanup
+                BridgeEvent::Timeout => {
+                    // loop to run clean up
                 }
-                DNSBridgeEvent::SocketError(error) => {
+                BridgeEvent::SocketError(error) => {
                     tracing::error!(
                         ?error,
                         "aborting because of unexpected error on listening DNS socket"
                     );
                     break Err(error).context("error on listening dns socket");
                 }
-                DNSBridgeEvent::DNSFromBridge(msg) => match mtx_state.remove(&msg.id()) {
+                BridgeEvent::DNSFromBridge(msg) => match mtx_state.remove(&msg.id()) {
                     Some(state) => {
                         tracing::debug!(
                             id = msg.id(),
@@ -154,7 +154,7 @@ impl DNSBridge {
                         )
                     }
                 },
-                DNSBridgeEvent::DNSFromNet(len, addr) => {
+                BridgeEvent::DNSFromNet(len, addr) => {
                     match DNSMessage::try_new(BytesMut::from(&buf[0..len])) {
                         Ok(msg) => {
                             let id = msg.id();
@@ -191,11 +191,6 @@ mod test {
 
     #[tokio::test]
     async fn test() {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .try_init()
-            .ok();
-
         let port = {
             let (_, port) = make_bound_socket("127.0.0.1").await.unwrap();
             port
@@ -204,7 +199,7 @@ mod test {
         // loopback channel
         let (tx, rx) = unbounded();
         // launch a new bridge task
-        let bridge = DNSBridge::start(
+        let bridge = Bridge::start(
             Config {
                 listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port),
                 timeout: Duration::from_secs(100),
@@ -232,11 +227,6 @@ mod test {
 
     #[tokio::test]
     async fn timeout() {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .try_init()
-            .ok();
-
         // create channels to and from bridge
         let (tx, mut from_bridge) = unbounded();
         let (mut to_bridge, rx) = unbounded();
@@ -248,7 +238,7 @@ mod test {
         };
 
         // create a new bridge
-        let bridge = DNSBridge::start(
+        let bridge = Bridge::start(
             Config {
                 listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port),
                 timeout: Duration::from_secs(1),
@@ -288,11 +278,6 @@ mod test {
 
     #[tokio::test]
     async fn collision() {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .try_init()
-            .ok();
-
         let port = {
             let (_, port) = make_bound_socket("127.0.0.1").await.unwrap();
             port
@@ -303,7 +288,7 @@ mod test {
         let (mut to_bridge, rx) = unbounded();
 
         // launch a new bridge task
-        let bridge = DNSBridge::start(
+        let bridge = Bridge::start(
             Config {
                 listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port),
                 timeout: Duration::from_secs(100),
