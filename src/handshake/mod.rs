@@ -309,7 +309,6 @@ where
 #[allow(unused)]
 mod test {
 
-    use hyper::header::TRANSFER_ENCODING;
     use tokio::net::UnixStream;
 
     use tokio::net::UnixListener;

@@ -201,10 +201,6 @@ mod test {
 
     #[tokio::test]
     async fn e2e() {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .init();
-
         let (br_tx, br_rx) = unbounded();
         let mut server = Server::new(br_tx);
         let bridge = egress_bridge::Bridge::start(
