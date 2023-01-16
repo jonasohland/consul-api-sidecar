@@ -3,10 +3,10 @@ use std::process;
 use clap::Parser;
 use consul_api_sidecar::{
     config,
-    dns::{self},
+    dns,
     service::{self, ServiceLauncher},
     task::TaskWrapper,
-    tcp::{self},
+    tcp,
 };
 use futures::channel::mpsc::unbounded;
 
@@ -50,7 +50,7 @@ async fn _main() {
         .with_max_level(cli.log_level)
         .init();
 
-    let (cfg_tx, cfg_rx) = unbounded::<config::agent::Config>();
+    let (cfg_tx, cfg_rx) = unbounded();
 
     let mut config_loader = config::loader::start(cli.config.clone(), cfg_tx);
     let mut services = service::start(cfg_rx, Launcher);

@@ -49,7 +49,7 @@ async fn _main() {
         .with_max_level(cli.log_level)
         .init();
 
-    let (cfg_tx, cfg_rx) = unbounded::<config::sidecar::Config>();
+    let (cfg_tx, cfg_rx) = unbounded();
 
     let mut config_loader = config::loader::start(cli.config.clone(), cfg_tx);
     let mut services = service::start(cfg_rx, Launcher);

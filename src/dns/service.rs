@@ -151,7 +151,7 @@ async fn start_client_services(
     .context("failed to start ingress bridge")?;
 
     let client = dns::client::Client::start(name, sock.compat(), to_ch, from_ch);
-    tracing::debug!("client running");
+    tracing::info!("client running");
     Ok((bridge, client))
 }
 
