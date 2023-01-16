@@ -15,7 +15,7 @@ async fn main() {
     let (to_net, from_bridge) = unbounded();
     let (to_bridge, from_net) = unbounded();
 
-    let forwarder = Forwarder::start(
+    let mut forwarder = Forwarder::start(
         FwdConfig {
             host: "localhost".to_owned(),
             port: 8600,
@@ -26,7 +26,7 @@ async fn main() {
     .await
     .unwrap();
 
-    let bridge = Bridge::start(
+    let mut bridge = Bridge::start(
         BridgeConfig {
             listen: "127.0.0.1:5355".parse().unwrap(),
             timeout: Duration::from_secs(100),
@@ -39,6 +39,6 @@ async fn main() {
 
     tokio::signal::ctrl_c().await.unwrap();
 
-    bridge.shutdown().await.unwrap();
-    forwarder.shutdown().await.unwrap();
+    bridge.shutdown().await;
+    forwarder.shutdown().await;
 }

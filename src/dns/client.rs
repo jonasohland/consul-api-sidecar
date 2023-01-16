@@ -1,28 +1,19 @@
-use std::{
-    io,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use std::io;
 
 use anyhow::{Context, Result};
 use futures::{
-    channel::{
-        mpsc::{UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
+    channel::mpsc::{UnboundedReceiver, UnboundedSender},
     AsyncRead, AsyncWrite, SinkExt, StreamExt,
 };
-use tokio::task::JoinHandle;
 use tracing::Instrument;
 
-use crate::dns::{receive_dns_message, send_dns_message, DNSMessage};
+use crate::{
+    dns::{receive_dns_message, send_dns_message, DNSMessage},
+    task::{start_task, ShutdownHandle, TaskWrapper},
+};
 
 pub struct Client {
-    done: Arc<AtomicBool>,
-    shutdown: oneshot::Sender<()>,
-    join: JoinHandle<Result<()>>,
+    task: TaskWrapper<Result<()>>,
 }
 
 enum Event {
@@ -32,22 +23,18 @@ enum Event {
 }
 
 impl Client {
-
     pub fn is_done(&self) -> bool {
-        self.done.load(Ordering::Relaxed)
+        self.task.is_done()
     }
 
-    pub async fn shutdown(self) {
-        self.shutdown.send(()).ok();
-        match self.join.await {
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => tracing::error!(?error, "session task failed"),
-            Err(error) => tracing::error!(?error, "failed to join session task"),
+    pub async fn shutdown(&mut self) {
+        if let Ok(Err(error)) = self.task.shutdown().await {
+            tracing::error!(?error, "client task shutdown failed");
         }
     }
 
     pub fn start<S>(
-        id: &str,
+        name: &str,
         sock: S,
         dns_tx: UnboundedSender<DNSMessage>,
         dns_rx: UnboundedReceiver<DNSMessage>,
@@ -55,29 +42,23 @@ impl Client {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
     {
-        let done = Arc::new(AtomicBool::new(false));
-        let (shutdown, shutdown_rx) = oneshot::channel();
         Self {
-            done: done.clone(),
-            shutdown,
-            join: tokio::task::spawn(
-                Self::run(sock, shutdown_rx, done, dns_tx, dns_rx)
-                    .instrument(tracing::error_span!("dns-channel-client", id)),
-            ),
+            task: start_task(|shutdown| {
+                Self::run(sock, shutdown, dns_tx, dns_rx)
+                    .instrument(tracing::error_span!("dns-channel-client", name))
+            }),
         }
     }
 
     pub async fn run<S>(
         mut sock: S,
-        mut shutdown: oneshot::Receiver<()>,
-        done: Arc<AtomicBool>,
+        mut shutdown: ShutdownHandle,
         mut dns_tx: UnboundedSender<DNSMessage>,
         mut dns_rx: UnboundedReceiver<DNSMessage>,
     ) -> Result<()>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
     {
-        scopeguard::guard(done, |done| done.store(true, Ordering::Relaxed));
         loop {
             match tokio::select! {
                 _ = &mut shutdown => {
@@ -123,5 +104,3 @@ impl Client {
         }
     }
 }
-
-

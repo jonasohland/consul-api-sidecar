@@ -5,7 +5,9 @@ use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 pub mod egress_bridge;
 pub mod ingress_bridge;
 pub mod forwarder;
-pub mod channel;
+pub mod client;
+pub mod server;
+pub mod service;
 
 pub struct DNSMessage {
     data: BytesMut,

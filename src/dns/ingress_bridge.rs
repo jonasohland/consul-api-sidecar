@@ -6,17 +6,17 @@ use anyhow::Context;
 use anyhow::Result;
 use bytes::BytesMut;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
-use futures::channel::oneshot;
 use futures::{SinkExt, StreamExt};
+use tokio::net::UdpSocket;
 use tokio::time::Instant;
-use tokio::{net::UdpSocket, task};
 use tracing::Instrument;
+
+use crate::task::{start_task, ShutdownHandle, TaskWrapper};
 
 use super::DNSMessage;
 
 pub struct Bridge {
-    shutdown: oneshot::Sender<()>,
-    task: task::JoinHandle<Result<()>>,
+    task: TaskWrapper<Result<()>>,
 }
 
 pub struct Config {
@@ -47,10 +47,10 @@ enum BridgeEvent {
 }
 
 impl Bridge {
-    pub async fn shutdown(self) -> Result<()> {
-        self.shutdown.send(()).ok();
-        self.task.await??;
-        Ok(())
+    pub async fn shutdown(&mut self) {
+        if let Ok(Err(error)) = self.task.shutdown().await {
+            tracing::error!(?error, "client task shutdown failed");
+        }
     }
 
     pub async fn start(
@@ -58,16 +58,14 @@ impl Bridge {
         dns_tx: UnboundedSender<DNSMessage>,
         dns_rx: UnboundedReceiver<DNSMessage>,
     ) -> Result<Self> {
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let sock = UdpSocket::bind(config.listen)
             .await
             .context("failed to bind listening socket")?;
         Ok(Self {
-            shutdown: shutdown_tx,
-            task: task::spawn(
-                Self::run(config, shutdown_rx, sock, dns_tx, dns_rx)
-                    .instrument(tracing::error_span!("dns-ingress-bridge")),
-            ),
+            task: start_task(|shutdown| {
+                Self::run(config, shutdown, sock, dns_tx, dns_rx)
+                    .instrument(tracing::error_span!("dns-ingress-bridge"))
+            }),
         })
     }
 
@@ -93,7 +91,7 @@ impl Bridge {
 
     async fn run(
         config: Config,
-        mut shutdown: oneshot::Receiver<()>,
+        mut shutdown: ShutdownHandle,
         sock: UdpSocket,
         mut dns_tx: UnboundedSender<DNSMessage>,
         mut dns_rx: UnboundedReceiver<DNSMessage>,
@@ -199,7 +197,7 @@ mod test {
         // loopback channel
         let (tx, rx) = unbounded();
         // launch a new bridge task
-        let bridge = Bridge::start(
+        let mut bridge = Bridge::start(
             Config {
                 listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port),
                 timeout: Duration::from_secs(100),
@@ -222,7 +220,7 @@ mod test {
         assert_eq!(DNSMessage::try_new(buf).unwrap().id(), 0x314f);
 
         // shut down
-        bridge.shutdown().await.unwrap();
+        bridge.shutdown().await;
     }
 
     #[tokio::test]
@@ -238,7 +236,7 @@ mod test {
         };
 
         // create a new bridge
-        let bridge = Bridge::start(
+        let mut bridge = Bridge::start(
             Config {
                 listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port),
                 timeout: Duration::from_secs(1),
@@ -273,7 +271,7 @@ mod test {
         }
 
         // shut down
-        bridge.shutdown().await.unwrap();
+        bridge.shutdown().await;
     }
 
     #[tokio::test]
@@ -288,7 +286,7 @@ mod test {
         let (mut to_bridge, rx) = unbounded();
 
         // launch a new bridge task
-        let bridge = Bridge::start(
+        let mut bridge = Bridge::start(
             Config {
                 listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port),
                 timeout: Duration::from_secs(100),
@@ -324,6 +322,6 @@ mod test {
         assert_eq!(DNSMessage::try_new(buf).unwrap().id(), 0x314f);
 
         // shut down
-        bridge.shutdown().await.unwrap();
+        bridge.shutdown().await;
     }
 }

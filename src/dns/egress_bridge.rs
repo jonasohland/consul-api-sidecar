@@ -2,24 +2,22 @@ use std::{collections::HashMap, time::Duration};
 
 use anyhow::Result;
 use futures::{
-    channel::{
-        mpsc::{UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
+    channel::mpsc::{UnboundedReceiver, UnboundedSender},
     SinkExt, StreamExt,
 };
-use tokio::{task::JoinHandle, time::Instant};
+use tokio::time::Instant;
 use tracing::Instrument;
+
+use crate::task::{start_task, ShutdownHandle, TaskWrapper};
 
 use super::{forwarder::Forwarder, DNSMessage};
 
 pub struct Bridge {
-    shutdown: oneshot::Sender<()>,
-    task: JoinHandle<Result<()>>,
+    task: TaskWrapper<Result<()>>,
 }
 
 pub struct Config {
-    message_timeout: Duration,
+    pub message_timeout: Duration,
 }
 
 impl Default for Config {
@@ -68,10 +66,10 @@ impl MessageState {
 }
 
 impl Bridge {
-    pub async fn shutdown(self) -> Result<()> {
-        self.shutdown.send(()).ok();
-        self.task.await??;
-        Ok(())
+    pub async fn shutdown(&mut self) {
+        if let Ok(Err(error)) = self.task.shutdown().await {
+            tracing::error!(?error, "client task shutdown failed");
+        }
     }
 
     pub fn start(
@@ -79,14 +77,11 @@ impl Bridge {
         forwarder: Forwarder,
         rx: UnboundedReceiver<BridgeMessage>,
     ) -> Result<Self> {
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-
         Ok(Self {
-            shutdown: shutdown_tx,
-            task: tokio::task::spawn(
-                Self::run(config, shutdown_rx, forwarder, rx)
-                    .instrument(tracing::error_span!("dns-egress-bridge")),
-            ),
+            task: start_task(|shutdown| {
+                Self::run(config, shutdown, forwarder, rx)
+                    .instrument(tracing::error_span!("dns-egress-bridge"))
+            }),
         })
     }
 
@@ -126,10 +121,11 @@ impl Bridge {
 
     async fn run(
         config: Config,
-        mut shutdown: oneshot::Receiver<()>,
+        mut shutdown: ShutdownHandle,
         mut forwarder: Forwarder,
         mut rx: UnboundedReceiver<BridgeMessage>,
     ) -> Result<()> {
+        tracing::debug!("running");
         let mut clients = HashMap::<String, UnboundedSender<DNSMessage>>::new();
         let mut messages = HashMap::<u16, MessageState>::new();
         loop {
@@ -173,6 +169,11 @@ impl Bridge {
                         let id = msg.id();
                         match clients.get_mut(&state.client) {
                             Some(client) => {
+                                tracing::debug!(
+                                    id,
+                                    client_id = state.client,
+                                    "reply received for registered dns request"
+                                );
                                 if let Err(error) = client.send(msg).await {
                                     tracing::warn!(
                                         id,
@@ -204,11 +205,14 @@ impl Bridge {
                             ?error,
                             "failed to send dns message to forwarder"
                         )
-                    } else if let Some(prev) =
-                        messages.insert(id, MessageState::new(client_id.clone()))
-                    {
-                        tracing::warn!(id, client_id, "msg id collision");
-                        messages.insert(id, prev);
+                    } else {
+                        tracing::debug!(client_id, id, "register new dns request");
+                        if let Some(prev) =
+                            messages.insert(id, MessageState::new(client_id.clone()))
+                        {
+                            tracing::warn!(id, client_id, "msg id collision");
+                            messages.insert(id, prev);
+                        }
                     }
                 }
             }
@@ -275,22 +279,22 @@ mod test {
     #[tokio::test]
     async fn shutdown() {
         let (_tx, rx) = unbounded();
-        let bridge = Bridge::start(Config::default(), Forwarder::loopback(), rx).unwrap();
+        let mut bridge = Bridge::start(Config::default(), Forwarder::loopback(), rx).unwrap();
         tokio::time::sleep(Duration::from_secs(1)).await;
-        bridge.shutdown().await.unwrap();
+        bridge.shutdown().await;
     }
 
     #[tokio::test]
     async fn loopback() {
         let (mut tx_dns, rx_dns) = unbounded();
 
-        let bridge = Bridge::start(Config::default(), Forwarder::loopback(), rx_dns).unwrap();
+        let mut bridge = Bridge::start(Config::default(), Forwarder::loopback(), rx_dns).unwrap();
 
         let mut client = MockClient::new(tx_dns).await;
 
         client.send_dns_msg(0xffff).await;
         assert_eq!(client.receive_dns_msg().await.id(), 0xffff);
-        bridge.shutdown().await.unwrap();
+        bridge.shutdown().await;
     }
 
     #[tokio::test]
@@ -300,7 +304,7 @@ mod test {
         let (fwd_tx, from_bridge) = unbounded();
         let mut loopback = ManualLoopback::new(to_bridge, from_bridge);
 
-        let bridge =
+        let mut bridge =
             Bridge::start(Config::default(), Forwarder::manual(fwd_tx, fwd_rx), rx_dns).unwrap();
 
         let mut client = MockClient::new(tx_dns).await;
@@ -312,13 +316,13 @@ mod test {
 
         assert_eq!(client.receive_dns_msg().await.id(), 0xffff);
 
-        bridge.shutdown().await.unwrap();
+        bridge.shutdown().await;
     }
 
     #[tokio::test]
     async fn client_cleanup() {
         let (mut tx_dns, rx_dns) = unbounded();
-        let bridge = Bridge::start(Config::default(), Forwarder::loopback(), rx_dns).unwrap();
+        let mut bridge = Bridge::start(Config::default(), Forwarder::loopback(), rx_dns).unwrap();
         {
             let mut client = MockClient::with_id("static", tx_dns.clone()).await;
             client.send_dns_msg(0xffff).await;
@@ -330,7 +334,7 @@ mod test {
             client.send_dns_msg(0xffff).await;
             assert_eq!(client.receive_dns_msg().await.id(), 0xffff);
         }
-        bridge.shutdown().await.unwrap()
+        bridge.shutdown().await;
     }
 
     #[tokio::test]
@@ -340,7 +344,7 @@ mod test {
         let (fwd_tx, from_bridge) = unbounded();
         let mut loopback = ManualLoopback::new(to_bridge, from_bridge);
 
-        let bridge = Bridge::start(
+        let mut bridge = Bridge::start(
             Config {
                 message_timeout: Duration::from_secs(1),
             },
@@ -372,6 +376,6 @@ mod test {
         loopback.loopback().await.unwrap();
         assert_eq!(client.receive_dns_msg().await.id(), 0xffff);
 
-        bridge.shutdown().await.unwrap();
+        bridge.shutdown().await;
     }
 }

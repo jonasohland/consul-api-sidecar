@@ -1,7 +1,10 @@
+use anyhow::anyhow;
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     Sink, SinkExt, Stream, StreamExt,
 };
+use serde::{de::Visitor, Deserialize};
+use url::Url;
 
 use super::DNSMessage;
 
@@ -13,9 +16,46 @@ pub struct Forwarder {
     rx: UnboundedReceiver<DNSMessage>,
 }
 
-pub enum Config {
+#[derive(Clone, PartialEq, Eq)]
+pub enum Address {
     Tcp(tcp::Config),
-    Udp(udp::Config)
+    Udp(udp::Config),
+}
+
+struct AddressVisitor;
+
+impl<'de> Visitor<'de> for AddressVisitor {
+    type Value = Address;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("string")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let url = Url::parse(v).map_err(|error| E::custom(error))?;
+        let host = url
+            .host()
+            .ok_or_else(|| E::custom("missing host in url"))?
+            .to_string();
+        let port = url.port().unwrap_or(53);
+        match url.scheme() {
+            "tcp" => Ok(Address::Tcp(tcp::Config { host, port })),
+            "udp" => Ok(Address::Udp(udp::Config { host, port })),
+            rest => Err(E::custom(anyhow!("invalid url scheme '{}'", rest))),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Address {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(AddressVisitor)
+    }
 }
 
 pub enum ForwarderTask {
@@ -23,12 +63,22 @@ pub enum ForwarderTask {
     Udp(udp::Forwarder),
 }
 
-impl Forwarder {
+impl ForwarderTask {
 
-    pub async fn try_new(config: Config) -> anyhow::Result<(ForwarderTask, Self)> {
+    pub async fn shutdown(&mut self) {
+        match self {
+            ForwarderTask::Tcp(task) => task.shutdown().await,
+            ForwarderTask::Udp(task) => task.shutdown().await,
+        }
+    }
+
+}
+
+impl Forwarder {
+    pub async fn try_new(config: Address) -> anyhow::Result<(ForwarderTask, Self)> {
         match config {
-            Config::Tcp(tcp_config) => Self::tcp(tcp_config).await,
-            Config::Udp(udp_config) => Self::udp(udp_config).await,
+            Address::Tcp(tcp_config) => Self::tcp(tcp_config).await,
+            Address::Udp(udp_config) => Self::udp(udp_config).await,
         }
     }
 

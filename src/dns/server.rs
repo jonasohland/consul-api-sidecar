@@ -1,29 +1,19 @@
-use std::{
-    collections::HashMap,
-    io,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use std::{collections::HashMap, io};
 
 use anyhow::{Context, Result};
 use futures::{
-    channel::{
-        mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
+    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     AsyncRead, AsyncWrite, SinkExt, StreamExt,
 };
-use tokio::task::JoinHandle;
 use tracing::Instrument;
 
-use crate::dns::{egress_bridge, receive_dns_message, send_dns_message, DNSMessage};
+use crate::{
+    dns::{egress_bridge, receive_dns_message, send_dns_message, DNSMessage},
+    task::{start_task, ShutdownHandle, TaskWrapper},
+};
 
 struct Session {
-    task: JoinHandle<Result<()>>,
-    shutdown: oneshot::Sender<()>,
-    done: Arc<AtomicBool>,
+    task: TaskWrapper<Result<()>>,
 }
 
 enum Event {
@@ -34,30 +24,26 @@ enum Event {
 
 impl Session {
     pub fn is_done(&self) -> bool {
-        self.done.load(Ordering::Relaxed)
+        self.task.is_done()
     }
 
-    pub async fn shutdown(self) {
-        self.shutdown.send(()).ok();
-        match self.task.await {
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => tracing::error!(?error, "session task failed"),
-            Err(error) => tracing::error!(?error, "failed to join session task"),
+    pub async fn shutdown(mut self) {
+        if let Ok(Err(error)) = self.task.shutdown().await {
+            tracing::error!(?error, "failed to shutdown dns channel server");
         }
     }
 
     pub async fn run<S>(
         id: String,
         mut sock: S,
-        mut shutdown: oneshot::Receiver<()>,
-        done: Arc<AtomicBool>,
+        mut shutdown: ShutdownHandle,
         mut tx: UnboundedSender<egress_bridge::BridgeMessage>,
         mut rx: UnboundedReceiver<DNSMessage>,
     ) -> Result<()>
     where
-        S: AsyncRead + AsyncWrite + Send + Unpin,
+        S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
     {
-        scopeguard::guard(done, |done| done.store(true, Ordering::Relaxed));
+        tracing::debug!("new session");
         loop {
             match tokio::select! {
                 _ = &mut shutdown => {
@@ -75,8 +61,8 @@ impl Session {
             } {
                 Event::Shutdown => {
                     tracing::debug!("session shut down");
-                    break Ok(())
-                },
+                    break Ok(());
+                }
                 Event::DNSFromBridge(msg) => {
                     if let Err(error) = send_dns_message(&mut sock, &msg).await {
                         tracing::warn!(?error, "failed to send dns message to channel")
@@ -112,10 +98,8 @@ impl Session {
         mut egress_bridge_tx: UnboundedSender<egress_bridge::BridgeMessage>,
     ) -> Result<Self>
     where
-        S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+        S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
     {
-        let done = Arc::new(AtomicBool::new(false));
-        let (shutdown, shutdown_rx) = oneshot::channel();
         let (responder, egress_bridge_rx) = unbounded();
 
         // register this new client
@@ -127,19 +111,16 @@ impl Session {
             .await?;
 
         Ok(Self {
-            task: tokio::task::spawn(
+            task: start_task(|shutdown| {
                 Self::run(
                     id.to_owned(),
                     sock,
-                    shutdown_rx,
-                    done.clone(),
+                    shutdown,
                     egress_bridge_tx,
                     egress_bridge_rx,
                 )
-                .instrument(tracing::error_span!("dns-channel-session", id)),
-            ),
-            shutdown,
-            done,
+                .instrument(tracing::error_span!("dns-channel-session", id))
+            }),
         })
     }
 }
@@ -173,7 +154,7 @@ impl Server {
 
     pub async fn accept<S>(&mut self, id: &str, sock: S)
     where
-        S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+        S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
     {
         tracing::debug!(id, "accept new session");
         match Session::launch(id, sock, self.egress_bridge_tx.clone()).await {
@@ -203,7 +184,7 @@ mod test {
     async fn e2e() {
         let (br_tx, br_rx) = unbounded();
         let mut server = Server::new(br_tx);
-        let bridge = egress_bridge::Bridge::start(
+        let mut bridge = egress_bridge::Bridge::start(
             egress_bridge::Config::default(),
             Forwarder::loopback(),
             br_rx,
@@ -234,6 +215,6 @@ mod test {
         assert_eq!(receive_dns_message(&mut c2).await.unwrap().id(), 0xff33);
 
         server.shutdown().await;
-        bridge.shutdown().await.unwrap();
+        bridge.shutdown().await;
     }
 }

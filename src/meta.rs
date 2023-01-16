@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::Result;
 use futures::{AsyncRead, AsyncWrite};
 
-use crate::handshake::frame::Frame;
+use crate::handshake::Frame;
 
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
 pub struct ServerMeta {

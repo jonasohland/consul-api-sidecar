@@ -3,29 +3,28 @@ use std::{io, net::SocketAddr, time::Duration};
 use anyhow::{Context, Result};
 use bytes::BytesMut;
 use futures::{
-    channel::{
-        mpsc::{UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
+    channel::mpsc::{UnboundedReceiver, UnboundedSender},
     SinkExt, StreamExt,
 };
 use tokio::{
     net::{lookup_host, UdpSocket},
-    task::JoinHandle,
     time::Instant,
 };
 use tracing::Instrument;
 
-use crate::dns::DNSMessage;
+use crate::{
+    dns::DNSMessage,
+    task::{start_task, ShutdownHandle, TaskWrapper},
+};
 
+#[derive(Clone, PartialEq, Eq)]
 pub struct Config {
     pub host: String,
     pub port: u16,
 }
 
 pub struct Forwarder {
-    join: JoinHandle<Result<()>>,
-    shutdown: oneshot::Sender<()>,
+    task: TaskWrapper<Result<()>>,
 }
 
 pub enum ForwarderEvent {
@@ -41,11 +40,10 @@ enum LookupEvent {
 }
 
 impl Forwarder {
-
-    pub async fn shutdown(self) -> Result<()> {
-        self.shutdown.send(()).ok();
-        self.join.await??;
-        Ok(())
+    pub async fn shutdown(&mut self) {
+        if let Ok(Err(error)) = self.task.shutdown().await {
+            tracing::error!(?error, "forwarder task failed");
+        }
     }
 
     pub async fn start(
@@ -53,22 +51,19 @@ impl Forwarder {
         to_bridge: UnboundedSender<DNSMessage>,
         from_bridge: UnboundedReceiver<DNSMessage>,
     ) -> Result<Self> {
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let sock = UdpSocket::bind("0.0.0.0:0").await?;
-        let join = tokio::task::spawn(
-            Self::run(config, sock, shutdown_rx, to_bridge, from_bridge)
-                .instrument(tracing::error_span!("dnsfwd", ty = "udp")),
-        );
         Ok(Self {
-            join,
-            shutdown: shutdown_tx,
+            task: start_task(|shutdown| {
+                Self::run(config, sock, shutdown, to_bridge, from_bridge)
+                    .instrument(tracing::error_span!("dns-fwd-udp"))
+            }),
         })
     }
 
     async fn run(
         config: Config,
         sock: UdpSocket,
-        mut shutdown: oneshot::Receiver<()>,
+        mut shutdown: ShutdownHandle,
         mut to_bridge: UnboundedSender<DNSMessage>,
         mut from_bridge: UnboundedReceiver<DNSMessage>,
     ) -> Result<()> {

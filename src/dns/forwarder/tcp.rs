@@ -2,26 +2,26 @@ use std::{io, mem::replace, time::Duration};
 
 use anyhow::Result;
 use futures::{
-    channel::{
-        mpsc::{UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
+    channel::mpsc::{UnboundedReceiver, UnboundedSender},
     SinkExt, StreamExt,
 };
-use tokio::{net::TcpStream, task::JoinHandle};
+use tokio::net::TcpStream;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use tracing::Instrument;
 
-use crate::dns::{receive_dns_message, send_dns_message, DNSMessage};
+use crate::{
+    dns::{receive_dns_message, send_dns_message, DNSMessage},
+    task::{start_task, ShutdownHandle, TaskWrapper},
+};
 
+#[derive(Clone, PartialEq, Eq)]
 pub struct Config {
     pub host: String,
     pub port: u16,
 }
 
 pub struct Forwarder {
-    join: JoinHandle<Result<()>>,
-    shutdown: oneshot::Sender<()>,
+    task: TaskWrapper<Result<()>>,
 }
 
 enum ForwarderState {
@@ -53,21 +53,18 @@ impl Forwarder {
         to_bridge: UnboundedSender<DNSMessage>,
         from_bridge: UnboundedReceiver<DNSMessage>,
     ) -> Self {
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let join = tokio::task::spawn(
-            Self::run(config, shutdown_rx, to_bridge, from_bridge)
-                .instrument(tracing::error_span!("dnsfwd", ty = "tcp")),
-        );
         Self {
-            join,
-            shutdown: shutdown_tx,
+            task: start_task(|shutdown| {
+                Self::run(config, shutdown, to_bridge, from_bridge)
+                    .instrument(tracing::error_span!("dns-fwd-tcp"))
+            }),
         }
     }
 
-    pub async fn shutdown(self) -> Result<()> {
-        self.shutdown.send(()).ok();
-        self.join.await??;
-        Ok(())
+    pub async fn shutdown(&mut self) {
+        if let Ok(Err(error)) = self.task.shutdown().await {
+            tracing::error!(?error, "forwarder task failed");
+        }
     }
 
     async fn try_connect(conf: &Config) -> TcpStream {
@@ -84,7 +81,7 @@ impl Forwarder {
 
     async fn run(
         config: Config,
-        mut shutdown: oneshot::Receiver<()>,
+        mut shutdown: ShutdownHandle,
         mut to_bridge: UnboundedSender<DNSMessage>,
         from_bridge: UnboundedReceiver<DNSMessage>,
     ) -> Result<()> {
@@ -114,7 +111,7 @@ impl Forwarder {
                         stream = Self::try_connect(&config) => { ForwarderEventNotConnected::Connected(stream) }
                     } {
                         ForwarderEventNotConnected::Connected(stream) => {
-                            tracing::info!("connected");
+                            tracing::debug!("connected");
                             connect_state = ForwarderState::Connected(stream)
                         }
                         ForwarderEventNotConnected::Shutdown => break Ok(()),
