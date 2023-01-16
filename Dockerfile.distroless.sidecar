@@ -1,0 +1,34 @@
+FROM rust:latest AS builder
+
+RUN update-ca-certificates
+
+ENV USER=consul-api-sidecar
+ENV UID=10001
+
+RUN adduser \
+    --disabled-password \
+    --gecos "" \
+    --home "/nonexistent" \
+    --shell "/sbin/nologin" \
+    --no-create-home \
+    --uid "${UID}" \
+    "${USER}"
+
+WORKDIR /consul-api-sidecar
+
+COPY ./ .
+
+RUN cargo build --release --bin consul-api-sidecar
+
+FROM gcr.io/distroless/cc
+
+COPY --from=builder /etc/passwd /etc/passwd
+COPY --from=builder /etc/group /etc/group
+
+WORKDIR /consul-api-sidecar
+
+COPY --from=builder /consul-api-sidecar/target/release/consul-api-sidecar ./
+
+USER consul-api-sidecar:consul-api-sidecar
+
+ENTRYPOINT ["/consul-api-sidecar/consul-api-sidecar"]

@@ -1,0 +1,36 @@
+FROM rust:latest AS builder
+
+RUN rustup target add x86_64-unknown-linux-musl
+RUN apt update && apt install -y musl-tools musl-dev
+RUN update-ca-certificates
+
+ENV USER=consul-api-agent
+ENV UID=10001
+
+RUN adduser \
+    --disabled-password \
+    --gecos "" \
+    --home "/nonexistent" \
+    --shell "/sbin/nologin" \
+    --no-create-home \
+    --uid "${UID}" \
+    "${USER}"
+
+WORKDIR /consul-api-agent
+
+COPY ./ .
+
+RUN cargo build --target x86_64-unknown-linux-musl --release --bin consul-api-agent
+
+FROM scratch
+
+COPY --from=builder /etc/passwd /etc/passwd
+COPY --from=builder /etc/group /etc/group
+
+WORKDIR /consul-api-agent
+
+COPY --from=builder /consul-api-agent/target/x86_64-unknown-linux-musl/release/consul-api-agent ./
+
+USER consul-api-agent:consul-api-agent
+
+ENTRYPOINT ["/consul-api-agent/consul-api-agent"]
