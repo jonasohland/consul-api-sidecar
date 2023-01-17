@@ -2,18 +2,6 @@ FROM rust:latest AS builder
 
 RUN update-ca-certificates
 
-ENV USER=consul-api-agent
-ENV UID=10001
-
-RUN adduser \
-    --disabled-password \
-    --gecos "" \
-    --home "/nonexistent" \
-    --shell "/sbin/nologin" \
-    --no-create-home \
-    --uid "${UID}" \
-    "${USER}"
-
 WORKDIR /consul-api-agent
 
 COPY ./ .
@@ -22,13 +10,8 @@ RUN cargo build --release --bin consul-api-agent
 
 FROM gcr.io/distroless/cc
 
-COPY --from=builder /etc/passwd /etc/passwd
-COPY --from=builder /etc/group /etc/group
-
 WORKDIR /consul-api-agent
 
 COPY --from=builder /consul-api-agent/target/release/consul-api-agent ./
-
-USER consul-api-agent:consul-api-agent
 
 ENTRYPOINT ["/consul-api-agent/consul-api-agent"]
