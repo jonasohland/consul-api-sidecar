@@ -42,14 +42,16 @@ job "consul-api-sidecar-example" {
       }
 
       template {
-        data        = <<EOF
+        change_mode   = "signal"
+        change_signal = "SIGHUP"
+        destination   = "${NOMAD_TASK_DIR}/config.toml"
+        data          = <<EOF
 [service.dns_1]
 type    = "dns"
 path    = "{{ env "NOMAD_TASK_DIR" }}/host-services/dns_1.sock"
 listen  = "127.0.0.1:53"
 timeout = 150
 EOF
-        destination = "${NOMAD_TASK_DIR}/config.toml"
       }
 
       resources {
