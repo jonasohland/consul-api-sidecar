@@ -34,7 +34,7 @@ impl ServiceLauncher<config::agent::Config> for Launcher {
     async fn launch(&mut self, name: &str, config: config::agent::ServiceConfig) -> Self::Task {
         match config {
             config::agent::ServiceConfig::DNS { path, address, timeout } => dns::service::start_server(name, path, address, timeout),
-            config::agent::ServiceConfig::TCP { path, host, port } => tcp::service::start_server(name, path, host, port),
+            config::agent::ServiceConfig::TCP { path, address } => tcp::service::start_server(name, path, address),
         }
     }
 

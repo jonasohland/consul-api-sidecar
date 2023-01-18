@@ -2,10 +2,10 @@ use std::process;
 
 use clap::Parser;
 use consul_api_sidecar::{
-    config,
-    dns::service::start_client,
+    config, dns,
     service::{self, ServiceLauncher},
     task::TaskWrapper,
+    tcp,
 };
 use futures::channel::mpsc::unbounded;
 
@@ -32,8 +32,8 @@ impl ServiceLauncher<config::sidecar::Config> for Launcher {
     #[rustfmt::skip]
     async fn launch(&mut self, name: &str, config: config::sidecar::ServiceConfig) -> Self::Task {
         match config {
-            config::sidecar::ServiceConfig::DNS { path, listen, timeout } => start_client(name, path, listen, timeout),
-            config::sidecar::ServiceConfig::TCP { path: _, listen: _ } => todo!(),
+            config::sidecar::ServiceConfig::DNS { path, listen, timeout } => dns::service::start_client(name, path, listen, timeout),
+            config::sidecar::ServiceConfig::TCP { path, listen } => tcp::service::start_client(name, path, listen),
         }
     }
 
