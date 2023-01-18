@@ -29,10 +29,10 @@ job "consul-api-sidecar-example" {
       driver = "docker"
 
       config {
-        image = "jonasohland/consul-api-sidecar:0.0.1-distroless"
+        image = "jonasohland/consul-api-sidecar:0.1.0-distroless"
         args = [
           "--config", "${NOMAD_TASK_DIR}/config.toml",
-          "--log-level", "debug"
+          "--log-level", "trace"
         ]
       }
 
@@ -51,6 +51,11 @@ type    = "dns"
 path    = "{{ env "NOMAD_TASK_DIR" }}/host-services/dns_1.sock"
 listen  = "127.0.0.1:53"
 timeout = 150
+
+[service.tcp_consul_api]
+type    = "tcp"
+path    = "{{ env "NOMAD_TASK_DIR" }}/host-services/consul_api.sock"
+listen  = "127.0.0.1:8500"
 EOF
       }
 

@@ -16,7 +16,7 @@ job "consul-api-agent" {
 
       config {
         network_mode = "host"
-        image        = "jonasohland/consul-api-agent:0.0.1-distroless"
+        image        = "jonasohland/consul-api-agent:0.1.0-distroless"
         args = [
           "--config", "${NOMAD_TASK_DIR}/config.toml",
           "--log-level", "debug"
@@ -38,6 +38,11 @@ type    = "dns"
 path    = "{{ env "NOMAD_TASK_DIR" }}/host-services/dns_1.sock"
 address = "udp://127.0.0.53:53"
 timeout = 150
+
+[service.tcp_consul_api]
+type    = "tcp"
+path    = "{{ env "NOMAD_TASK_DIR" }}/host-services/consul_api.sock"
+address = "tcp://127.0.0.1:8500"
 EOF
       }
 
