@@ -56,11 +56,9 @@ async fn _main() {
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
-        res = config_loader.wait() => {
-            if let Ok(Some(Err(error))) = res {
-                tracing::error!(?error, "config loader failed");
-                process::exit(1);
-            }
+        res = config_loader.wait() => if let Ok(Some(Err(error))) = res {
+            tracing::error!(?error, "config loader failed");
+            process::exit(1);
         }
     }
 

@@ -73,9 +73,7 @@ impl Forwarder {
                 res = lookup_host((config.host.as_str(), config.port)) => {
                     LookupEvent::LookupResult(res.map(|it| it.filter(|addr| addr.ip().is_ipv4()).collect::<Vec<_>>()))
                 }
-                _ = &mut shutdown => {
-                    LookupEvent::Shutdown
-                }
+                _ = &mut shutdown => LookupEvent::Shutdown
             } {
                 LookupEvent::Shutdown => break None,
                 LookupEvent::LookupResult(Ok(hosts)) => {
@@ -99,12 +97,8 @@ impl Forwarder {
                 .unwrap_or_else(|| Duration::from_secs(5));
             tracing::trace!(?sleep_time, "sleep before next dns resolution attempt");
             if tokio::select! {
-                _ = tokio::time::sleep(sleep_time) => {
-                    false
-                }
-                _ = &mut shutdown => {
-                    true
-                }
+                _ = tokio::time::sleep(sleep_time) => false,
+                _ = &mut shutdown => true
             } {
                 break None;
             }
@@ -114,18 +108,14 @@ impl Forwarder {
                 let mut buf = BytesMut::zeroed(2048);
                 loop {
                     match tokio::select! {
-                        _ = &mut shutdown => { ForwarderEvent::Shutdown }
-                        res = from_bridge.next() => {
-                            match res {
-                                Some(msg) => ForwarderEvent::DNSFromBridge(msg),
-                                None => ForwarderEvent::Shutdown,
-                            }
-                        }
-                        res = sock.recv_from(&mut buf) => {
-                            match res {
-                                Err(error) => ForwarderEvent::SocketError(error),
-                                Ok((len, addr)) => ForwarderEvent::DNSFromNet(len, addr)
-                            }
+                        _ = &mut shutdown => ForwarderEvent::Shutdown,
+                        res = from_bridge.next() => match res {
+                            Some(msg) => ForwarderEvent::DNSFromBridge(msg),
+                            None => ForwarderEvent::Shutdown,
+                        },
+                        res = sock.recv_from(&mut buf) => match res {
+                            Err(error) => ForwarderEvent::SocketError(error),
+                            Ok((len, addr)) => ForwarderEvent::DNSFromNet(len, addr)
                         }
                     } {
                         ForwarderEvent::Shutdown => break Ok(()),

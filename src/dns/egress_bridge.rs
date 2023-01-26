@@ -130,25 +130,16 @@ impl Bridge {
         let mut messages = HashMap::<u16, MessageState>::new();
         loop {
             match tokio::select! {
-                _ = &mut shutdown => {
-                    BridgeEvent::Shutdown
-                }
-                _ = tokio::time::sleep(Duration::from_secs(3)) => {
-                    BridgeEvent::Timeout
-                }
-                res = forwarder.next() => {
-                    match res {
-                        Some(msg) => BridgeEvent::DNSFromNet(msg),
-                        None => BridgeEvent::Shutdown,
-                    }
-
-                }
-                res = rx.next() => {
-                    match res {
-                        Some(BridgeMessage::Register(id, responder)) => BridgeEvent::Registration(id, responder),
-                        Some(BridgeMessage::DnsMessage(id, msg)) => BridgeEvent::DNSFromBridge(id, msg),
-                        None => BridgeEvent::Shutdown
-                    }
+                _ = &mut shutdown => BridgeEvent::Shutdown,
+                _ = tokio::time::sleep(Duration::from_secs(3)) => BridgeEvent::Timeout,
+                res = forwarder.next() => match res {
+                    Some(msg) => BridgeEvent::DNSFromNet(msg),
+                    None => BridgeEvent::Shutdown,
+                },
+                res = rx.next() => match res {
+                    Some(BridgeMessage::Register(id, responder)) => BridgeEvent::Registration(id, responder),
+                    Some(BridgeMessage::DnsMessage(id, msg)) => BridgeEvent::DNSFromBridge(id, msg),
+                    None => BridgeEvent::Shutdown
                 }
             } {
                 BridgeEvent::Shutdown => {

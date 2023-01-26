@@ -61,18 +61,12 @@ impl Client {
     {
         loop {
             match tokio::select! {
-                _ = &mut shutdown => {
-                    Event::Shutdown
-                }
-                res = dns_rx.next() => {
-                    match res {
-                        Some(msg) => Event::DNSFromBridge(msg),
-                        None => Event::Shutdown
-                    }
-                }
-                res = receive_dns_message(&mut sock) => {
-                    Event::DNSFromChannel(res)
-                }
+                _ = &mut shutdown => Event::Shutdown,
+                res = dns_rx.next() => match res {
+                    Some(msg) => Event::DNSFromBridge(msg),
+                    None => Event::Shutdown
+                },
+                res = receive_dns_message(&mut sock) => Event::DNSFromChannel(res),
             } {
                 Event::Shutdown => {
                     tracing::debug!("session shut down");

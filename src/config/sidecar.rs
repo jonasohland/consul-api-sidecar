@@ -4,7 +4,11 @@ use std::{collections::HashMap, net::SocketAddr};
 #[serde(tag = "type")]
 pub enum ServiceConfig {
     #[serde(rename = "dns")]
-    DNS { path: String, listen: SocketAddr, timeout: u64 },
+    DNS {
+        path: String,
+        listen: SocketAddr,
+        timeout: u64,
+    },
 
     #[serde(rename = "tcp")]
     TCP { path: String, listen: SocketAddr },

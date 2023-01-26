@@ -64,14 +64,12 @@ pub enum ForwarderTask {
 }
 
 impl ForwarderTask {
-
     pub async fn shutdown(&mut self) {
         match self {
             ForwarderTask::Tcp(task) => task.shutdown().await,
             ForwarderTask::Udp(task) => task.shutdown().await,
         }
     }
-
 }
 
 impl Forwarder {

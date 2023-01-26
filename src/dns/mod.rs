@@ -2,10 +2,10 @@ use anyhow::Result;
 use bytes::BytesMut;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub mod egress_bridge;
-pub mod ingress_bridge;
-pub mod forwarder;
 pub mod client;
+pub mod egress_bridge;
+pub mod forwarder;
+pub mod ingress_bridge;
 pub mod server;
 pub mod service;
 

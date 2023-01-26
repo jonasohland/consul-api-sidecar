@@ -100,24 +100,15 @@ impl Bridge {
         let mut mtx_state: HashMap<u16, DNSMsgState> = Default::default();
         loop {
             match tokio::select! {
-                _ = &mut shutdown => {
-                    BridgeEvent::Shutdown
-                }
-                _ = tokio::time::sleep(Duration::from_secs(3)) => {
-                    BridgeEvent::Timeout
-                }
-                res = sock.recv_from(&mut buf) => {
-                    match res {
-                        Ok((len, addr)) => BridgeEvent::DNSFromNet(len, addr),
-                        Err(e) => BridgeEvent::SocketError(e),
-                    }
-
-                }
-                res = dns_rx.next() => {
-                    match res {
-                        Some(msg) => BridgeEvent::DNSFromBridge(msg),
-                        None => BridgeEvent::Shutdown
-                    }
+                _ = &mut shutdown => BridgeEvent::Shutdown,
+                _ = tokio::time::sleep(Duration::from_secs(3)) => BridgeEvent::Timeout,
+                res = sock.recv_from(&mut buf) => match res {
+                    Ok((len, addr)) => BridgeEvent::DNSFromNet(len, addr),
+                    Err(e) => BridgeEvent::SocketError(e),
+                },
+                res = dns_rx.next() => match res {
+                    Some(msg) => BridgeEvent::DNSFromBridge(msg),
+                    None => BridgeEvent::Shutdown
                 }
             } {
                 BridgeEvent::Shutdown => {

@@ -1,7 +1,7 @@
 use url::Url;
 
-pub mod service;
 pub mod fwd;
+pub mod service;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Address {

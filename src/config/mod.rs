@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 pub mod agent;
-pub mod sidecar;
 pub mod loader;
+pub mod sidecar;
 
 pub trait Config {
     type ServiceConfig: PartialEq + Eq;

@@ -95,12 +95,8 @@ async fn run_server(
         Ok((mut bridge, mut server, mut fwd, listener)) => {
             loop {
                 match tokio::select! {
-                    _ = &mut shutdown => {
-                        ServerEvent::Shutdown
-                    }
-                    res = listener.accept() => {
-                        ServerEvent::Accepted(res)
-                    }
+                    _ = &mut shutdown => ServerEvent::Shutdown,
+                    res = listener.accept() => ServerEvent::Accepted(res),
                 } {
                     ServerEvent::Shutdown => {
                         tracing::debug!("server shut down");

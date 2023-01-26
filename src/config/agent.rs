@@ -13,10 +13,7 @@ pub enum ServiceConfig {
     },
 
     #[serde(rename = "tcp")]
-    TCP {
-        path: String,
-        address: tcp::Address, 
-    },
+    TCP { path: String, address: tcp::Address },
 }
 
 #[derive(serde::Deserialize)]

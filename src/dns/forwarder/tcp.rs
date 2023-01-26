@@ -91,13 +91,11 @@ impl Forwarder {
             match replace(&mut connect_state, ForwarderState::Invalid) {
                 ForwarderState::Waiting => {
                     match tokio::select! {
-                        opt = Pin::new(&mut from_bridge).peek() => {
-                            match opt {
-                                Some(_) => ForwarderEventWaiting::ConnectNow,
-                                None => ForwarderEventWaiting::Shutdown
-                            }
-                        }
-                        _ = &mut shutdown => { ForwarderEventWaiting::Shutdown }
+                        opt = Pin::new(&mut from_bridge).peek() => match opt {
+                            Some(_) => ForwarderEventWaiting::ConnectNow,
+                            None => ForwarderEventWaiting::Shutdown
+                        },
+                        _ = &mut shutdown => ForwarderEventWaiting::Shutdown
                     } {
                         ForwarderEventWaiting::ConnectNow => {
                             connect_state = ForwarderState::Connecting
@@ -107,8 +105,8 @@ impl Forwarder {
                 }
                 ForwarderState::Connecting => {
                     match tokio::select! {
-                        _ = &mut shutdown => { ForwarderEventNotConnected::Shutdown }
-                        stream = Self::try_connect(&config) => { ForwarderEventNotConnected::Connected(stream) }
+                        _ = &mut shutdown => ForwarderEventNotConnected::Shutdown,
+                        stream = Self::try_connect(&config) => ForwarderEventNotConnected::Connected(stream)
                     } {
                         ForwarderEventNotConnected::Connected(stream) => {
                             tracing::debug!("connected");
@@ -120,18 +118,12 @@ impl Forwarder {
                 ForwarderState::Connected(stream) => {
                     let mut stream = stream.compat();
                     match tokio::select! {
-                        dns = receive_dns_message(&mut stream) => {
-                            ForwarderEventConnected::DnsFromNet(dns)
-                        }
-                        opt_msg = &mut from_bridge.next() => {
-                            match opt_msg {
-                                Some(msg) => ForwarderEventConnected::DnsFromBridge(msg),
-                                None => ForwarderEventConnected::Shutdown,
-                            }
-                        }
-                        _ = &mut shutdown => {
-                            ForwarderEventConnected::Shutdown
-                        }
+                        dns = receive_dns_message(&mut stream) => ForwarderEventConnected::DnsFromNet(dns),
+                        opt_msg = &mut from_bridge.next() => match opt_msg {
+                            Some(msg) => ForwarderEventConnected::DnsFromBridge(msg),
+                            None => ForwarderEventConnected::Shutdown,
+                        },
+                        _ = &mut shutdown => ForwarderEventConnected::Shutdown,
                     } {
                         ForwarderEventConnected::DnsFromNet(res) => match res {
                             Ok(msg) => {
