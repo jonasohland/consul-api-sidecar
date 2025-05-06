@@ -19,7 +19,7 @@ struct Session {
 enum Event {
     Shutdown,
     DNSFromBridge(DNSMessage),
-    DNSFromChannel(anyhow::Result<DNSMessage>),
+    DNSFromClient(anyhow::Result<DNSMessage>),
 }
 
 impl Session {
@@ -51,7 +51,7 @@ impl Session {
                     Some(msg) => Event::DNSFromBridge(msg),
                     None => Event::Shutdown
                 },
-                res = receive_dns_message(&mut sock) => Event::DNSFromChannel(res)
+                res = receive_dns_message(&mut sock) => Event::DNSFromClient(res)
             } {
                 Event::Shutdown => {
                     tracing::debug!("session shut down");
@@ -59,10 +59,10 @@ impl Session {
                 }
                 Event::DNSFromBridge(msg) => {
                     if let Err(error) = send_dns_message(&mut sock, &msg).await {
-                        tracing::warn!(?error, "failed to send dns message to channel")
+                        break Err(error).context("send dns message to client");
                     }
                 }
-                Event::DNSFromChannel(res) => match res {
+                Event::DNSFromClient(res) => match res {
                     Err(error) => {
                         if let Some(ioe) = error.downcast_ref::<io::Error>() {
                             if ioe.kind() == io::ErrorKind::UnexpectedEof {
@@ -70,8 +70,7 @@ impl Session {
                                 break Ok(());
                             }
                         }
-                        tracing::warn!(?error, "failed to receive dns message from channel");
-                        break Err(error).context("failed to receive dns message from channel");
+                        break Err(error).context("receive dns message from client");
                     }
                     Ok(msg) => {
                         if let Err(error) = tx
