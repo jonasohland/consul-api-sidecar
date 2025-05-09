@@ -10,7 +10,7 @@ use tokio_util::compat::TokioAsyncReadCompatExt;
 use tracing::Instrument;
 
 use crate::{
-    dns::{receive_dns_message, send_dns_message, DNSMessage},
+    dns::{send_dns_message, DNSMessage, DNSMessageReader},
     task::{start_task, ShutdownHandle, TaskWrapper},
 };
 
@@ -117,8 +117,9 @@ impl Forwarder {
                 }
                 ForwarderState::Connected(stream) => {
                     let mut stream = stream.compat();
+                    let mut reader = DNSMessageReader::new();
                     match tokio::select! {
-                        dns = receive_dns_message(&mut stream) => ForwarderEventConnected::DnsFromNet(dns),
+                        dns = reader.read(&mut stream) => ForwarderEventConnected::DnsFromNet(dns),
                         opt_msg = &mut from_bridge.next() => match opt_msg {
                             Some(msg) => ForwarderEventConnected::DnsFromBridge(msg),
                             None => ForwarderEventConnected::Shutdown,

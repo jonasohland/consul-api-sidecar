@@ -8,7 +8,7 @@ use futures::{
 use tracing::Instrument;
 
 use crate::{
-    dns::{egress_bridge, receive_dns_message, send_dns_message, DNSMessage},
+    dns::{egress_bridge, send_dns_message, DNSMessage, DNSMessageReader},
     task::{start_task, ShutdownHandle, TaskWrapper},
 };
 
@@ -43,7 +43,8 @@ impl Session {
     where
         S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
     {
-        tracing::debug!("new session");
+        let mut msg_reader = DNSMessageReader::new();
+
         loop {
             match tokio::select! {
                 _ = &mut shutdown => Event::Shutdown,
@@ -51,7 +52,7 @@ impl Session {
                     Some(msg) => Event::DNSFromBridge(msg),
                     None => Event::Shutdown
                 },
-                res = receive_dns_message(&mut sock) => Event::DNSFromClient(res)
+                res = msg_reader.read(&mut sock) => Event::DNSFromClient(res)
             } {
                 Event::Shutdown => {
                     tracing::debug!("session shut down");
@@ -203,9 +204,11 @@ mod test {
         )
         .await;
 
-        assert_eq!(receive_dns_message(&mut c2).await.unwrap().id(), 0xffee);
-        assert_eq!(receive_dns_message(&mut c2).await.unwrap().id(), 0xffff);
-        assert_eq!(receive_dns_message(&mut c2).await.unwrap().id(), 0xff33);
+        let mut reader = DNSMessageReader::new();
+
+        assert_eq!(reader.read(&mut c2).await.unwrap().id(), 0xffee);
+        assert_eq!(reader.read(&mut c2).await.unwrap().id(), 0xffff);
+        assert_eq!(reader.read(&mut c2).await.unwrap().id(), 0xff33);
 
         server.shutdown().await;
         bridge.shutdown().await;

@@ -13,6 +13,35 @@ pub struct DNSMessage {
     data: BytesMut,
 }
 
+pub struct DNSMessageReader {
+    current_msg_len: u16,
+}
+
+impl DNSMessageReader {
+    fn new() -> DNSMessageReader {
+        return DNSMessageReader { current_msg_len: 0 };
+    }
+
+    async fn read<S>(&mut self, mut s: S) -> Result<DNSMessage>
+    where
+        S: AsyncRead + Unpin,
+    {
+        if self.current_msg_len == 0 {
+            let mut len_buf = [0u8; 2];
+            s.read_exact(&mut len_buf).await?;
+
+            self.current_msg_len = u16::from_be_bytes(len_buf)
+        }
+
+        let mut data = BytesMut::zeroed(self.current_msg_len as usize);
+        s.read_exact(&mut data).await?;
+
+        self.current_msg_len = 0;
+
+        DNSMessage::try_new(data)
+    }
+}
+
 impl DNSMessage {
     pub fn try_new(data: BytesMut) -> Result<Self> {
         if data.len() >= 2 {
@@ -25,17 +54,6 @@ impl DNSMessage {
     pub fn id(&self) -> u16 {
         u16::from_be_bytes(self.data[0..2].try_into().unwrap())
     }
-}
-
-pub async fn receive_dns_message<S>(s: &mut S) -> Result<DNSMessage>
-where
-    S: AsyncRead + Unpin,
-{
-    let mut len_buf = [0u8; 2];
-    s.read_exact(&mut len_buf).await?;
-    let mut data = BytesMut::zeroed(u16::from_be_bytes(len_buf) as usize);
-    s.read_exact(&mut data).await?;
-    DNSMessage::try_new(data)
 }
 
 pub async fn send_dns_message<S>(s: &mut S, msg: &DNSMessage) -> Result<()>
@@ -54,7 +72,7 @@ mod test {
 
     use crate::testing::make_test_connection;
 
-    use super::{receive_dns_message, send_dns_message, DNSMessage};
+    use super::{send_dns_message, DNSMessage, DNSMessageReader};
 
     #[test]
     pub fn make_msg() {
@@ -67,7 +85,8 @@ mod test {
         let (mut a, mut b) = make_test_connection();
 
         let ta = task::spawn(async move {
-            let message = receive_dns_message(&mut a).await.unwrap();
+            let mut reader = DNSMessageReader::new();
+            let message = reader.read(&mut a).await.unwrap();
             assert_eq!(message.id(), 0xff43);
         });
 

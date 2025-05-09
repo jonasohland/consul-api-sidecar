@@ -8,7 +8,7 @@ use futures::{
 use tracing::Instrument;
 
 use crate::{
-    dns::{receive_dns_message, send_dns_message, DNSMessage},
+    dns::{send_dns_message, DNSMessage, DNSMessageReader},
     task::{start_task, ShutdownHandle, TaskWrapper},
 };
 
@@ -59,6 +59,7 @@ impl Client {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
     {
+        let mut msg_reader = DNSMessageReader::new();
         loop {
             match tokio::select! {
                 _ = &mut shutdown => Event::Shutdown,
@@ -66,7 +67,7 @@ impl Client {
                     Some(msg) => Event::DNSFromBridge(msg),
                     None => Event::Shutdown
                 },
-                res = receive_dns_message(&mut sock) => Event::DNSFromServer(res),
+                res = msg_reader.read(&mut sock) => Event::DNSFromServer(res),
             } {
                 Event::Shutdown => {
                     tracing::debug!("session shut down");
